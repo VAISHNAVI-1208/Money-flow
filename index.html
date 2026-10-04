@@ -76,6 +76,15 @@
   .date { font-size:11px; color:#8A8578; }
   .amt { font-size:15px; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .del { border:none; background:transparent; color:#B0AA98; font-size:16px; padding:0 4px; }
+  .newcat { display:none; gap:8px; margin-bottom:10px; }
+  .newcat input { flex:1; }
+  .newcat button { padding:8px 12px; border-radius:7px; border:none; background:var(--ink); color:var(--paper); font-size:13px; }
+  .newcat button.c { background:transparent; border:1px solid var(--line); color:var(--muted); }
+  .linkbtn { border:none; background:transparent; color:var(--out); font-size:12px; padding:0; margin:-4px 0 10px; text-decoration:underline; display:none; }
+  .history { margin-bottom:18px; }
+  .history summary { font-size:13px; color:var(--muted); cursor:pointer; margin-bottom:8px; }
+  .hrow { display:flex; justify-content:space-between; font-size:12.5px; padding:8px 4px; border-bottom:1px solid var(--line); }
+  .hrow .hl { color:var(--muted); font-size:11px; }
   .print-only { display:none; }
   @media print {
     .no-print { display:none !important; }
@@ -137,10 +146,15 @@
       <div class="d sans" id="monthDays">over 1 day</div>
     </div>
     <div class="stat">
-      <div class="l sans">Last month's avg / day</div>
+      <div class="l sans">Last month saved</div>
       <div id="lastMonthBlock"><div class="d sans" style="margin-top:8px;">No prior month yet</div></div>
     </div>
   </div>
+
+  <details class="history sans" id="historyBox" style="display:none;">
+    <summary>Past months</summary>
+    <div id="historyList"></div>
+  </details>
 
   <button class="btn-ghost sans" id="newMonthBtn" onclick="toggleConfirm(true)">Start new month</button>
   <div class="confirm" id="confirmBox" style="display:none;">
@@ -167,6 +181,12 @@
         <select id="categoryInput"></select>
       </div>
     </div>
+    <div class="newcat" id="newCatRow">
+      <input type="text" id="newCatInput" maxlength="30" placeholder="New category name" />
+      <button type="button" onclick="addCategory()">Add</button>
+      <button type="button" class="c" onclick="cancelNewCat()">Cancel</button>
+    </div>
+    <button type="button" class="linkbtn" id="delCatBtn" onclick="deleteCategory()">Delete this category</button>
     <div class="full">
       <label style="font-size:11px; color:var(--muted); display:block; margin-bottom:4px;">Purpose</label>
       <input type="text" id="purposeInput" placeholder="What was this for?" />
@@ -196,19 +216,34 @@
 </div>
 
 <script>
-const EXPENSE_CATEGORIES = [
+const DEFAULT_EXPENSE = [
   { id: "educational", label: "Educational" },
   { id: "household", label: "Household" },
   { id: "office", label: "Office" },
   { id: "travel", label: "Travel" },
   { id: "medical", label: "Medical" },
   { id: "loan_repayment", label: "Loan repayment" },
+  { id: "food", label: "Food & groceries" },
+  { id: "rent", label: "Rent" },
+  { id: "bills", label: "Bills & utilities" },
+  { id: "transport", label: "Transport & fuel" },
+  { id: "shopping", label: "Shopping" },
+  { id: "entertainment", label: "Entertainment" },
+  { id: "subscriptions", label: "Subscriptions" },
+  { id: "insurance", label: "Insurance" },
+  { id: "investment_out", label: "Investment / SIP" },
+  { id: "gifts_donations", label: "Gifts & donations" },
   { id: "miscellaneous", label: "Miscellaneous" },
 ];
-const INCOME_CATEGORIES = [
+const DEFAULT_INCOME = [
   { id: "salary", label: "Salary" },
   { id: "business", label: "Business" },
+  { id: "freelance", label: "Freelance" },
+  { id: "bonus", label: "Bonus" },
   { id: "investment", label: "Investment" },
+  { id: "interest", label: "Interest" },
+  { id: "rental", label: "Rental income" },
+  { id: "refund", label: "Refund" },
   { id: "loan_received", label: "Loan received" },
   { id: "gift", label: "Gift" },
   { id: "other", label: "Other" },
@@ -216,13 +251,31 @@ const INCOME_CATEGORIES = [
 const CATEGORY_COLORS = {
   educational:"#4B6EA8", household:"#8A6B3D", office:"#5C6B8A", travel:"#3D7A7A",
   medical:"#9C4B6B", loan_repayment:"#A05A2C", miscellaneous:"#6B6558",
+  food:"#B5762E", rent:"#7A4B3D", bills:"#4B7A8A", transport:"#5A6B3D", shopping:"#9C5A7A",
+  entertainment:"#7A5AA0", subscriptions:"#4B5AA0", insurance:"#3D6B7A", investment_out:"#2F6D4F",
+  gifts_donations:"#A0507A",
   salary:"#2F6D4F", business:"#3D7A5F", investment:"#5A8A4F",
   loan_received:"#6E7A2F", gift:"#7A8A3D", other:"#6B6558",
+  freelance:"#2F7A6D", bonus:"#4F8A3D", interest:"#5A7A3D", rental:"#3D7A4F", refund:"#6B8A4F",
 };
+const CUSTOM_PALETTE = ["#C2571A","#1F7A8C","#8E44AD","#B8860B","#C0392B","#2E86C1","#117A65","#AF601A"];
+function esc(str) { return String(str).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function loadJSON(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
+
+// custom categories added by the user: { in: [{id,label,color}], out: [...] }
+let customCats = loadJSON("mf_categories", { in: [], out: [] });
+function categoriesFor(t) { return [...(t === "in" ? DEFAULT_INCOME : DEFAULT_EXPENSE), ...(customCats[t] || [])]; }
+function colorFor(id) {
+  if (CATEGORY_COLORS[id]) return CATEGORY_COLORS[id];
+  const c = [...customCats.in, ...customCats.out].find(x => x.id === id);
+  return c ? c.color : "#A9791F";
+}
 
 let entries = JSON.parse(localStorage.getItem("mf_entries") || "[]");
 let sessionStart = JSON.parse(localStorage.getItem("mf_sessionStart") || "null");
 let lastMonth = JSON.parse(localStorage.getItem("mf_lastMonth") || "null");
+let history = loadJSON("mf_history", null);
+if (!history) { history = lastMonth ? [lastMonth] : []; localStorage.setItem("mf_history", JSON.stringify(history)); }
 if (!sessionStart) {
   sessionStart = entries.length ? Math.min(...entries.map(e => e.createdAt)) : Date.now();
   localStorage.setItem("mf_sessionStart", JSON.stringify(sessionStart));
@@ -242,7 +295,7 @@ function formatDate(ts) {
 }
 function daysBetween(start, end) { return Math.max(1, Math.ceil((end - start) / 86400000)); }
 function labelFor(catId) {
-  const all = [...INCOME_CATEGORIES, ...EXPENSE_CATEGORIES];
+  const all = [...categoriesFor("in"), ...categoriesFor("out")];
   const found = all.find(c => c.id === catId);
   return found ? found.label : catId;
 }
@@ -250,6 +303,8 @@ function save() {
   localStorage.setItem("mf_entries", JSON.stringify(entries));
   localStorage.setItem("mf_sessionStart", JSON.stringify(sessionStart));
   localStorage.setItem("mf_lastMonth", JSON.stringify(lastMonth));
+  localStorage.setItem("mf_history", JSON.stringify(history));
+  localStorage.setItem("mf_categories", JSON.stringify(customCats));
 }
 
 function setType(t) {
@@ -257,9 +312,64 @@ function setType(t) {
   document.getElementById("typeInBtn").className = "type-btn" + (t === "in" ? " active-in" : "");
   document.getElementById("typeOutBtn").className = "type-btn" + (t === "out" ? " active-out" : "");
   const sel = document.getElementById("categoryInput");
-  const opts = t === "in" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
-  sel.innerHTML = opts.map(c => `<option value="${c.id}">${c.label}</option>`).join("");
+  fillCategories();
 }
+
+function fillCategories(selectId) {
+  const sel = document.getElementById("categoryInput");
+  sel.innerHTML = categoriesFor(currentType).map(c => `<option value="${c.id}">${esc(c.label)}</option>`).join("")
+    + `<option value="__new__">+ Add new category\u2026</option>`;
+  if (selectId) sel.value = selectId;
+  cancelNewCat(true);
+  updateDelBtn();
+}
+function isCustom(id) { return customCats[currentType].some(c => c.id === id); }
+function updateDelBtn() {
+  const sel = document.getElementById("categoryInput");
+  document.getElementById("delCatBtn").style.display = isCustom(sel.value) ? "block" : "none";
+}
+function cancelNewCat(silent) {
+  document.getElementById("newCatRow").style.display = "none";
+  document.getElementById("newCatInput").value = "";
+  if (!silent) { const sel = document.getElementById("categoryInput"); sel.selectedIndex = 0; updateDelBtn(); }
+}
+function addCategory() {
+  const input = document.getElementById("newCatInput");
+  const name = input.value.trim();
+  if (!name) return;
+  const existing = categoriesFor(currentType).find(c => c.label.toLowerCase() === name.toLowerCase());
+  if (existing) { fillCategories(existing.id); return; }
+  const id = "c_" + name.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 20) + "_" + Math.random().toString(36).slice(2, 5);
+  const color = CUSTOM_PALETTE[(customCats.in.length + customCats.out.length) % CUSTOM_PALETTE.length];
+  customCats[currentType].push({ id, label: name, color });
+  save();
+  fillCategories(id);
+}
+function deleteCategory() {
+  const sel = document.getElementById("categoryInput");
+  const id = sel.value;
+  if (!isCustom(id)) return;
+  if (entries.some(e => e.category === id)) {
+    alert("This category is used by existing entries, so it can't be deleted.");
+    return;
+  }
+  customCats[currentType] = customCats[currentType].filter(c => c.id !== id);
+  save();
+  fillCategories();
+}
+document.getElementById("categoryInput").addEventListener("change", function(e) {
+  if (e.target.value === "__new__") {
+    document.getElementById("newCatRow").style.display = "flex";
+    document.getElementById("delCatBtn").style.display = "none";
+    document.getElementById("newCatInput").focus();
+  } else {
+    document.getElementById("newCatRow").style.display = "none";
+    updateDelBtn();
+  }
+});
+document.getElementById("newCatInput").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") { e.preventDefault(); addCategory(); }
+});
 
 function toggleConfirm(show) {
   document.getElementById("confirmBox").style.display = show ? "block" : "none";
@@ -282,6 +392,7 @@ function startNewMonth() {
     label: `${formatDate(sessionStart)} \u2013 ${formatDate(Date.now())}`,
     income: stats.income, outgoing: stats.outgoing, net: stats.net, avgDaily: stats.avgDaily,
   };
+  history.push(lastMonth);
   sessionStart = Date.now();
   currentScope = "month";
   document.getElementById("scopeSelect").value = "month";
@@ -297,8 +408,8 @@ function exportPdf() {
     <tr>
       <td style="padding:5px 8px; border-bottom:1px solid #ccc;">${formatDate(e.createdAt)}</td>
       <td style="padding:5px 8px; border-bottom:1px solid #ccc;">${e.type === "in" ? "Incoming" : "Outgoing"}</td>
-      <td style="padding:5px 8px; border-bottom:1px solid #ccc;">${labelFor(e.category)}</td>
-      <td style="padding:5px 8px; border-bottom:1px solid #ccc;">${e.purpose}</td>
+      <td style="padding:5px 8px; border-bottom:1px solid #ccc;">${esc(labelFor(e.category))}</td>
+      <td style="padding:5px 8px; border-bottom:1px solid #ccc;">${esc(e.purpose)}</td>
       <td style="padding:5px 8px; border-bottom:1px solid #ccc; text-align:right;">${e.type === "in" ? "+" : "-"}${formatMoney(e.amount)}</td>
     </tr>`).join("");
   const stats = currentMonthStats();
@@ -321,6 +432,11 @@ document.getElementById("entryForm").addEventListener("submit", function(e) {
   const numeric = parseFloat(amountInput.value);
   if (!amountInput.value || isNaN(numeric) || numeric <= 0) {
     errBox.textContent = "Enter an amount greater than zero.";
+    errBox.style.display = "block";
+    return;
+  }
+  if (categoryInput.value === "__new__") {
+    errBox.textContent = "Add the new category name first, or pick an existing one.";
     errBox.style.display = "block";
     return;
   }
@@ -376,11 +492,20 @@ function render() {
   const lmBlock = document.getElementById("lastMonthBlock");
   if (lastMonth) {
     lmBlock.innerHTML = `
-      <div class="v" style="color:${lastMonth.avgDaily >= 0 ? "var(--income)" : "var(--out)"}">${formatMoney(lastMonth.avgDaily)}</div>
+      <div class="v" style="color:${lastMonth.net >= 0 ? "var(--income)" : "var(--out)"}">${formatMoney(lastMonth.net)}</div>
+      <div class="d sans">${formatMoney(lastMonth.avgDaily)} / day</div>
       <div class="d sans">${lastMonth.label}</div>`;
   } else {
     lmBlock.innerHTML = `<div class="d sans" style="margin-top:8px;">No prior month yet</div>`;
   }
+
+  const hBox = document.getElementById("historyBox");
+  if (history.length > 1) {
+    hBox.style.display = "block";
+    document.getElementById("historyList").innerHTML = [...history].reverse().map(h => `
+      <div class="hrow"><div>${esc(h.label)}<div class="hl">in +${formatMoney(h.income)} \u00b7 out -${formatMoney(h.outgoing)} \u00b7 ${formatMoney(h.avgDaily)}/day</div></div>
+      <div style="color:${h.net >= 0 ? "var(--income)" : "var(--out)"}">${formatMoney(h.net)}</div></div>`).join("");
+  } else { hBox.style.display = "none"; }
 
   const source = currentScope === "month" ? currentMonthEntries() : entries;
   const map = {};
@@ -393,9 +518,9 @@ function render() {
     const max = breakdown[0].amount || 1;
     document.getElementById("breakdownList").innerHTML = breakdown.map(c => {
       const pct = Math.round((c.amount / max) * 100);
-      const color = CATEGORY_COLORS[c.id] || "#A9791F";
+      const color = colorFor(c.id);
       return `<div class="cat-row">
-        <div class="cat-top"><span>${labelFor(c.id)}</span><span class="cat-amt">${formatMoney(c.amount)}</span></div>
+        <div class="cat-top"><span>${esc(labelFor(c.id))}</span><span class="cat-amt">${formatMoney(c.amount)}</span></div>
         <div class="bar-bg"><div class="bar-fg" style="width:${pct}%; background:${color};"></div></div>
       </div>`;
     }).join("");
@@ -411,12 +536,12 @@ function render() {
     entryListEl.innerHTML = `<div class="empty sans">No entries yet.</div>`;
   } else {
     entryListEl.innerHTML = list.map(e => {
-      const color = CATEGORY_COLORS[e.category] || "#A9791F";
+      const color = colorFor(e.category);
       return `<div class="entry">
         <div style="min-width:0; flex:1;">
-          <div class="purpose">${e.purpose}</div>
+          <div class="purpose">${esc(e.purpose)}</div>
           <div class="meta sans">
-            <span class="tag" style="background:${color}22; color:${color};">${labelFor(e.category)}</span>
+            <span class="tag" style="background:${color}22; color:${color};">${esc(labelFor(e.category))}</span>
             <span class="date">${new Date(e.createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span>
           </div>
         </div>
